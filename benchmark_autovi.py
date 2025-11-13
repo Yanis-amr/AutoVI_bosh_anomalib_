@@ -23,7 +23,7 @@ from typing import Dict, Any, List
 # --- Réglages de base ---
 DATA_ROOT = "datasets/AutoVI_v1"        # racine de ton dataset AutoVI v1
 CATEGORY  = "engine_wiring"             # sous-dossier à tester
-EXTS      = [".png", ".jpg"]
+EXTS      = [".bmp", ".png", ".jpg"]
 RESULTS_DIR = "results"
 MAX_EPOCHS = 1                          # On reste à 1 epoch pour que ca tourne sur un portable : 1 passage complet du modèle sur toutes les images d’entraînement
 
