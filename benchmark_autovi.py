@@ -47,7 +47,7 @@ def run_one(model_name, model_ctor, train_bs, eval_bs):
         root=f"{DATA_ROOT}/{CATEGORY}",
         normal_dir="train",
         abnormal_dir="test",
-        #mask_dir="ground_truth",
+        #mask_dir="ground_truth", #on peut activer les masques d'anomalie si on veut des métriques au niveau pixel
         extensions=EXTS,
         train_batch_size=train_bs,
         eval_batch_size=eval_bs,
