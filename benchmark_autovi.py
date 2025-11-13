@@ -1,6 +1,9 @@
 # benchmark_autovi.py
 
-# --- PATCH ANOMALIB pour Windows: désactiver totalement les symlinks "latest" ---
+# Mini-benchmark sur AutoVI v1 / engine_wiring en entraînant successivement EfficientAD, PatchCore et PaDiM (1 époque, CPU), 
+# puis affiche un tableau récapitulatif des scores (AUROC/F1 image, et pixel si dispo).
+
+# --- PATCH ANOMALIB pour Windows: désactiver totalement les liens symboliques : symlinks "latest" ---
 from pathlib import Path
 from anomalib.utils import path as an_path
 
@@ -22,20 +25,21 @@ DATA_ROOT = "datasets/AutoVI_v1"        # racine de ton dataset AutoVI v1
 CATEGORY  = "engine_wiring"             # sous-dossier à tester
 EXTS      = [".png", ".jpg"]
 RESULTS_DIR = "results"
-MAX_EPOCHS = 1                          # tu voulais rester à 1 pour tester sur ton portable
+MAX_EPOCHS = 1                          # On reste à 1 epoch pour que ca tourne sur un portable : 1 passage complet du modèle sur toutes les images d’entraînement
 
 # Pour éviter les soucis CPU/Windows (démarrage plus simple des DataLoaders)
 COMMON_DATA_KW = dict(
     num_workers=0,  # évite les overheads de workers sur CPU Windows
 )
 
-# Configs par modèle (nom lisible, constructeur, batch sizes adaptés)
+# Configs par modèle (nom lisible, constructeur, batch train, batch eval)
 MODEL_CONFIGS = [
-    ("EfficientAd", EfficientAd, 1, 1),  # EfficientAd exige batch_size=1
-    ("PatchCore",  Patchcore,    8, 8),  # PatchCore supporte des batchs >1
+    ("EfficientAd", EfficientAd, 1, 1),  # EfficientAd exige batch_size=1 -> le modèle traite une image à la fois.
+    ("PatchCore",  Patchcore,    8, 8),  # PatchCore supporte des batchs >1 -> il traite 8 images en parallèle, plus rapide mais plus gourmand en RAM.
     ("PaDiM",      Padim,        8, 8),  # PaDiM aussi
 ]
 
+# Fonction qui éxecute le benchmark pour un modèle donné
 def run_one(model_name, model_ctor, train_bs, eval_bs):
     # 1) data
     data = Folder(
@@ -43,6 +47,7 @@ def run_one(model_name, model_ctor, train_bs, eval_bs):
         root=f"{DATA_ROOT}/{CATEGORY}",
         normal_dir="train",
         abnormal_dir="test",
+        #mask_dir="ground_truth",
         extensions=EXTS,
         train_batch_size=train_bs,
         eval_batch_size=eval_bs,
@@ -62,6 +67,16 @@ def run_one(model_name, model_ctor, train_bs, eval_bs):
         logger=False,
         default_root_dir=results_dir,
     )
+
+    # Sur la tour de bureau, on peut activer le GPU et checkpointing :
+    #engine = Engine(
+    #max_epochs=20,
+    #accelerator="gpu",
+    #devices=1,
+    #logger=True,
+    #enable_checkpointing=True,
+    #default_root_dir=results_dir,
+    #)
 
     # 5) train + test
     engine.fit(model=model, datamodule=data)
