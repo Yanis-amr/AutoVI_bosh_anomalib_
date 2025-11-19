@@ -16,6 +16,7 @@ from anomalib.metrics import AUROC, AUPR, AUPRO
 from anomalib.data import Folder
 from anomalib.deploy import ExportType
 from anomalib.deploy import TorchInferencer
+import os
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_curve, auc, average_precision_score, roc_auc_score
 from itertools import chain
@@ -115,53 +116,107 @@ def predict(datamodule, engine):
     return predictions
 
 def compute_metrics(predictions, output_dir):
-    """
-    Calcule les métriques image (AUROC, AP, accuracy, tpr@fpr)
-    + courbe ROC, en utilisant scikit-learn.
+    """Calcule les métriques image + pixel à partir d'une liste d'ImageBatch."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    Pour l’instant, les métriques pixel (Pixel_Auroc, Pixel_Aupro)
-    sont mises à 0 (pas de masques exploités).
-    """
+    # --- Récupération des scores/image/labels sur tout le test ---
+    y_true_list = []
+    y_score_list = []
+    y_pred_list = []
 
-    # On empile tous les labels / scores / prédictions
-    y_true = np.array(list(chain(*[np.array(p["label"]).ravel() for p in predictions])))
-    y_scores = np.array(list(chain(*[np.array(p["pred_scores"]).ravel() for p in predictions])))
-    y_pred = np.array(list(chain(*[np.array(p["pred_labels"]).ravel() for p in predictions]))).astype(int)
+    # Pour les métriques pixel (si on a des masques)
+    pixel_scores_list = []
+    pixel_gt_list = []
+    has_pixel = False
 
-    # --- métriques image (classification) ---
-    # AUROC "classique"
-    image_auroc = roc_auc_score(y_true, y_scores)
+    for batch in predictions:
+        # batch est un ImageBatch
+        # gt_label, pred_score, pred_label sont des tenseurs Torch
+        labels = batch.gt_label          # (B,)
+        scores = batch.pred_score        # (B,)
+        preds = batch.pred_label         # (B,)
 
-    # AP (Average Precision)
+        labels_np = labels.detach().cpu().numpy().ravel()
+        scores_np = scores.detach().cpu().numpy().ravel()
+        preds_np = preds.detach().cpu().numpy().ravel()
+
+        y_true_list.append(labels_np)
+        y_score_list.append(scores_np)
+        y_pred_list.append(preds_np)
+
+        # Pixel-level (si gt_mask et anomaly_map sont présents)
+        if batch.gt_mask is not None and batch.anomaly_map is not None:
+            gm = batch.gt_mask.detach().cpu().numpy()
+            am = batch.anomaly_map.detach().cpu().numpy()
+            # Flatten sur tout le batch
+            pixel_gt_list.append(gm.reshape(-1))
+            pixel_scores_list.append(am.reshape(-1))
+            has_pixel = True
+
+    # Concatène tous les batches
+    y_true = np.concatenate(y_true_list)
+    y_scores = np.concatenate(y_score_list)
+    y_pred = np.concatenate(y_pred_list)
+
+    # --- Métriques image-level ---
+    accuracy = accuracy_score(y_true, y_pred)
     ap = average_precision_score(y_true, y_scores)
 
-    # Accuracy à partir des labels prédits
-    accuracy = accuracy_score(y_true, y_pred)
-
-    # Courbe ROC pour :
-    #  - sauvegarder un plot
-    #  - calculer tpr @ fpr = [0, 0.01, 0.05, 0.1]
     fpr, tpr, thresholds = roc_curve(y_true, y_scores)
-    tpr_values = np.interp([0, 0.01, 0.05, 0.1], fpr, tpr)
-    image_auroc2 = auc(fpr, tpr)
+    image_auroc = auc(fpr, tpr)
 
-    # --- Sauvegarde de la courbe ROC ---
+    # tpr à fpr = 0, 0.01, 0.05, 0.1
+    tpr_values = np.interp([0, 0.01, 0.05, 0.1], fpr, tpr)
+
+    # Sauvegarde de la courbe ROC
     plt.clf()
-    plt.title("ROC")
-    plt.plot(fpr, tpr, "b", label="AUC = %0.2f" % image_auroc2)
-    plt.legend(loc="lower right")
+    plt.title("ROC (image-level)")
+    plt.plot(fpr, tpr, label=f"AUC = {image_auroc:.3f}")
     plt.plot([0, 1], [0, 1], "r--")
     plt.xlim([0, 1])
     plt.ylim([0, 1])
-    plt.ylabel("True Positive Rate")
     plt.xlabel("False Positive Rate")
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    plt.savefig(str(Path(output_dir) / "auroc.png"))
+    plt.ylabel("True Positive Rate")
+    plt.legend(loc="lower right")
+    (output_dir / "image_auroc.png").parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_dir / "image_auroc.png")
 
-    # --- métriques pixel : pour l'instant, 0 ---
-    pixel_auroc = 0.0
-    pixel_aupro = 0.0
+    # --- Métriques pixel-level (si masques dispo) ---
+    if has_pixel:
+        pixel_scores = np.concatenate(pixel_scores_list)
+        pixel_gt = np.concatenate(pixel_gt_list)
 
+        try:
+            pixel_auroc = roc_auc_score(pixel_gt, pixel_scores)
+        except Exception:
+            pixel_auroc = 0.0
+
+        # Pour l’instant: pas de vrai AUPRO (complexe à recoder), on met 0
+        pixel_aupro = 0.0
+
+        # (Optionnel) tu peux tracer une ROC pixel si tu veux
+        try:
+            fpr_p, tpr_p, _ = roc_curve(pixel_gt, pixel_scores)
+            pixel_auroc2 = auc(fpr_p, tpr_p)
+
+            plt.clf()
+            plt.title("ROC (pixel-level)")
+            plt.plot(fpr_p, tpr_p, label=f"AUC = {pixel_auroc2:.3f}")
+            plt.plot([0, 1], [0, 1], "r--")
+            plt.xlim([0, 1])
+            plt.ylim([0, 1])
+            plt.xlabel("False Positive Rate")
+            plt.ylabel("True Positive Rate")
+            plt.legend(loc="lower right")
+            plt.savefig(output_dir / "pixel_auroc.png")
+        except Exception:
+            pass
+    else:
+        pixel_auroc = 0.0
+        pixel_aupro = 0.0
+
+    # --- Assemble les métriques dans un DataFrame ---
     metrics = pd.DataFrame(
         {
             "Image_Auroc": [np.around(image_auroc, 3)],
@@ -172,21 +227,46 @@ def compute_metrics(predictions, output_dir):
             "Pixel_Aupro": [np.around(pixel_aupro, 3)],
         }
     )
+
     return metrics
 
 
+
+
 def cls_result(predictions):
-    images_paths =np.array(list(chain(*[pred['image_path'] for pred in predictions])))
-    images_names = [path.split("\\")[-1] for path in images_paths] 
-    y_true = np.array(list(chain(*[pred['label'] for pred in predictions])))
-    y_scores = np.array(list(chain(*[pred['pred_scores'] for pred in predictions])))
-    y_pred = np.array(list(chain(*[pred['pred_labels'] for pred in predictions]))).astype(int) 
+    """Retourne un DataFrame avec, pour chaque image du test :
+       - nom de l'image
+       - label réel
+       - score d'anomalie
+       - label prédit
+    """
+    image_names = []
+    y_true_list = []
+    y_scores_list = []
+    y_pred_list = []
+
+    for batch in predictions:
+        # image_path est typiquement une liste de chemins de longueur B
+        paths = batch.image_path
+        # gt_label, pred_score, pred_label sont des tenseurs
+        labels = batch.gt_label.detach().cpu().numpy().ravel()
+        scores = batch.pred_score.detach().cpu().numpy().ravel()
+        preds = batch.pred_label.detach().cpu().numpy().ravel()
+
+        # On parcourt les éléments du batch
+        for p, y, s, yhat in zip(paths, labels, scores, preds):
+            name = p.split("\\")[-1].split("/")[-1]  # compatible Windows / Linux
+            image_names.append(name)
+            y_true_list.append(int(y))
+            y_scores_list.append(float(s))
+            y_pred_list.append(int(yhat))
 
     result = pd.DataFrame(
-        {'image_name': images_names,
-        'y_true': y_true,
-        'y_score': y_scores,
-        'y_pred': y_pred,
+        {
+            "image_name": image_names,
+            "y_true": y_true_list,
+            "y_score": y_scores_list,
+            "y_pred": y_pred_list,
         }
     )
     return result
@@ -260,6 +340,7 @@ def experiment_metrics_synthesis(experiment_name):
     aurocs_table.to_excel("./results/" + experiment_name + "/Auroc_mean.xlsx")
     aps_table.to_excel("./results/" + experiment_name + "/AP_mean.xlsx")
     aupros_table.to_excel("./results/" + experiment_name + "/Aupro_mean.xlsx")
+
 
 
 
