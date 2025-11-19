@@ -17,7 +17,7 @@ from anomalib.data import Folder
 from anomalib.deploy import ExportType
 from anomalib.deploy import TorchInferencer
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_curve, auc, average_precision_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_curve, auc, average_precision_score, roc_auc_score
 from itertools import chain
 import pandas as pd
 import time
@@ -260,5 +260,6 @@ def experiment_metrics_synthesis(experiment_name):
     aurocs_table.to_excel("./results/" + experiment_name + "/Auroc_mean.xlsx")
     aps_table.to_excel("./results/" + experiment_name + "/AP_mean.xlsx")
     aupros_table.to_excel("./results/" + experiment_name + "/Aupro_mean.xlsx")
+
 
 
