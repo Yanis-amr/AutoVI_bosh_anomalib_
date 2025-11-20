@@ -233,13 +233,12 @@ def compute_metrics(predictions, output_dir):
 
 
 
-def cls_result(predictions):
-    """Retourne un DataFrame avec, pour chaque image du test :
+""" def cls_result(predictions):
+    """"""  Retourne un DataFrame avec, pour chaque image du test :
        - nom de l'image
        - label réel
        - score d'anomalie
-       - label prédit
-    """
+       - label prédit """"""
     image_names = []
     y_true_list = []
     y_scores_list = []
@@ -269,7 +268,40 @@ def cls_result(predictions):
             "y_pred": y_pred_list,
         }
     )
-    return result
+    return result """
+
+def cls_result(predictions):
+    """Retourne un DataFrame compatible Windows & Linux.
+       predictions : liste de ImageBatch (anomalib ≥ 1.1)
+    """
+    image_names = []
+    y_true_list = []
+    y_scores_list = []
+    y_pred_list = []
+
+    for batch in predictions:
+        paths = batch.image_path                     # liste de chemins
+        labels = batch.gt_label.cpu().numpy().ravel()      # (B,)
+        scores = batch.pred_score.cpu().numpy().ravel()     # (B,)
+        preds  = batch.pred_label.cpu().numpy().ravel()     # (B,)
+
+        for p, y, s, yhat in zip(paths, labels, scores, preds):
+            # os.path.basename => gère / et \ automatiquement
+            name = os.path.basename(p)
+
+            image_names.append(name)
+            y_true_list.append(int(y))
+            y_scores_list.append(float(s))
+            y_pred_list.append(int(yhat))
+
+    return pd.DataFrame(
+        {
+            "image_name": image_names,
+            "y_true": y_true_list,
+            "y_score": y_scores_list,
+            "y_pred": y_pred_list,
+        }
+    )
 
 def inference_torch(image_path, torch_model, show_result=False):
     inferencer = TorchInferencer(path=torch_model)
@@ -340,6 +372,7 @@ def experiment_metrics_synthesis(experiment_name):
     aurocs_table.to_excel("./results/" + experiment_name + "/Auroc_mean.xlsx")
     aps_table.to_excel("./results/" + experiment_name + "/AP_mean.xlsx")
     aupros_table.to_excel("./results/" + experiment_name + "/Aupro_mean.xlsx")
+
 
 
 
